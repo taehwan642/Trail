@@ -10,8 +10,8 @@
 #pragma endregion
 using namespace std;
 
-LPDIRECT3D9             g_pD3D = NULL; // 디바이스를 초기하기 위해서 사용하는 구조체
-LPDIRECT3DDEVICE9       g_pd3dDevice = NULL; // 사용할 디바이스
+LPDIRECT3D9             g_pD3D = NULL;
+LPDIRECT3DDEVICE9       g_pd3dDevice = NULL;
 D3DXVECTOR3 trailuppos = { 0, 0.5f, 0 };
 D3DXVECTOR3 traildownpos = { 0, -0.5f, 0 };
 float deltatime = 0; // 놀랍게도 이거 야매
@@ -21,6 +21,8 @@ D3DXVECTOR3 boxrot;
 D3DXVECTOR3 boxmin, boxmax;
 D3DXMATRIX boxWorld;
 
+LPDIRECT3DTEXTURE9 texture;
+
 struct VTXCOL
 {
 	D3DXVECTOR3 pos;
@@ -28,6 +30,14 @@ struct VTXCOL
 };
 
 #define VTXCOL_FVF (D3DFVF_XYZ|D3DFVF_DIFFUSE)
+
+struct VTXTEX
+{
+	D3DXVECTOR3 pos;
+	D3DXVECTOR2 uv;
+};
+
+#define VTXTEX_FVF (D3DFVF_XYZ|D3DFVF_TEX1)
 
 struct INDEX16
 {
@@ -39,7 +49,7 @@ struct INDEX16
 class TrailEffect
 {
 private:
-	struct TrailData // 각 트레일이 가지고 있을 데이터
+	struct TrailData
 	{
 		D3DXVECTOR3 position[2];
 		double timecount = 0.0;
@@ -53,31 +63,30 @@ private:
 	};
 
 private:
-	LPDIRECT3DDEVICE9 device = nullptr; // 트레일을 그릴 디바이스
-	unsigned long vtxSize = 0; // 정점 크기 (sizeof(VTXCOL))
-	unsigned long maxvtxCnt = 0; // 최대 정점 개수
-	unsigned long maxtriCnt = 0; // 최대 삼각형 개수
-	unsigned long curTriCnt = 0;  // 현재 삼각형 개수
-	unsigned long curVtxCnt = 0; // 현재 정점 개수
-	double duration = 0.0; // 트레일이 살아있을 수 있는 최대 시간
+	LPDIRECT3DDEVICE9 device = nullptr; 
+	unsigned long vtxSize = 0;
+	unsigned long maxvtxCnt = 0;
+	unsigned long maxtriCnt = 0;
+	unsigned long curTriCnt = 0;
+	unsigned long curVtxCnt = 0;
+	double duration = 0.0;
 	double alivetime = 0.0;
-	size_t lerpcnt = 0; // 와 ciba! 이건 i / lerpcnt d (기본 일단 10개로 세팅)
+	size_t lerpcnt = 0;
 	float timer = 0.0f;
-	std::vector<TrailData> trailDatas; // 트레일들을 담을 컨테이너
-
-
+	float uvRate = 0.0f;
+	std::vector<TrailData> trailDatas;
 
 public:
 	bool renderline = false;
 	explicit TrailEffect() {};
 	virtual ~TrailEffect() {};
-	LPDIRECT3DVERTEXBUFFER9 vb = nullptr; // 버텍스 버퍼
-	LPDIRECT3DINDEXBUFFER9  ib = nullptr; // 인덱스 버퍼
+	LPDIRECT3DVERTEXBUFFER9 vb = nullptr;
+	LPDIRECT3DINDEXBUFFER9  ib = nullptr;
 
 public:
 	HRESULT Initalize(LPDIRECT3DDEVICE9& dev, const unsigned long& _bufferSize, const unsigned long& _lerpCnt, const  double& _duration, const double& _alivetime, const size_t& _lerpcnt);
 	void AddNewTrail(const D3DXVECTOR3& upposition, const D3DXVECTOR3& downposition);
-	void SplineTrailPosition(VTXCOL* vtx, const size_t& dataindex, unsigned long& index); // vertexindex는 updateTrail 속 for문에서 넣는거고, index는 그 maxVtxCnt 비교문 해야함
+	void SplineTrailPosition(VTXTEX* vtx, const size_t& dataindex, unsigned long& index); // vertexindex는 updateTrail 속 for문에서 넣는거고, index는 그 maxVtxCnt 비교문 해야함
 	void UpdateTrail();
 	void RenderTrail();
 };
@@ -89,20 +98,18 @@ HRESULT TrailEffect::Initalize(LPDIRECT3DDEVICE9& dev, const unsigned long& _buf
 	device = dev;
 
 	maxvtxCnt = _bufferSize;
-	if (maxvtxCnt <= 2) // 최소 1개의 삼각형이 만들어질 수 없는 환경이 세팅이 되지 못했다면
+	if (maxvtxCnt <= 2) 
 		goto error;
 
 	maxtriCnt = maxvtxCnt - 2;
-	vtxSize = sizeof(VTXCOL);
+	vtxSize = sizeof(VTXTEX);
 	duration = _duration;
 	alivetime = _alivetime;
 	lerpcnt = _lerpcnt;
 
-	// 정점 버퍼 생성
-	if (FAILED(device->CreateVertexBuffer(maxvtxCnt * vtxSize, 0, VTXCOL_FVF, D3DPOOL_MANAGED, &vb, nullptr)))
+	if (FAILED(device->CreateVertexBuffer(maxvtxCnt * vtxSize, 0, VTXTEX_FVF, D3DPOOL_MANAGED, &vb, nullptr)))
 		goto error;
 
-	// 인덱스 버퍼 생성
 	if (FAILED(device->CreateIndexBuffer(sizeof(INDEX16) * maxtriCnt, 0, D3DFMT_INDEX16, D3DPOOL_MANAGED, &ib, nullptr)))
 		goto error;
 	
@@ -124,7 +131,7 @@ void TrailEffect::AddNewTrail(const D3DXVECTOR3& upposition, const D3DXVECTOR3& 
 	}
 }
 
-void TrailEffect::SplineTrailPosition(VTXCOL* vtx, const size_t& dataindex, unsigned long& index)
+void TrailEffect::SplineTrailPosition(VTXTEX* vtx, const size_t& dataindex, unsigned long& index)
 {
 	D3DXMATRIX im;
 	D3DXMatrixInverse(&im, 0, &boxWorld);
@@ -135,12 +142,15 @@ void TrailEffect::SplineTrailPosition(VTXCOL* vtx, const size_t& dataindex, unsi
 	size_t iCurIndex = index;
 
 	D3DXVec3TransformCoord(&vtx[index].pos, &trailDatas[dataindex].position[0], &im);
-	vtx[index++].color = D3DCOLOR_XRGB(255, 0, 204);
+	//vtx[index++].color = D3DCOLOR_XRGB(255, 0, 204);
+	++index;
 
 	if (maxvtxCnt <= index)
 		return;
+
 	D3DXVec3TransformCoord(&vtx[index].pos, &trailDatas[dataindex].position[1], &im);
-	vtx[index++].color = D3DCOLOR_XRGB(255, 255, 0);
+	//vtx[index++].color = D3DCOLOR_XRGB(255, 255, 0);
+	++index;
 
 	if (maxvtxCnt <= index)
 		return;
@@ -149,8 +159,7 @@ void TrailEffect::SplineTrailPosition(VTXCOL* vtx, const size_t& dataindex, unsi
 
 	unsigned long iSize = trailDatas.size();
 
-	// 보간 
-	for (unsigned long j = 1 /*분모가 0이면 BOOM!*/; j < lerpcnt; ++j)
+	for (unsigned long j = 1; j < lerpcnt; ++j)
 	{
 		int iEditIndexV0 = (dataindex < 1 ? 0 : dataindex - 1);
 		int iEditIndexV2 = (dataindex + 1 >= iSize ? dataindex : dataindex + 1);
@@ -172,14 +181,14 @@ void TrailEffect::SplineTrailPosition(VTXCOL* vtx, const size_t& dataindex, unsi
 
 
 		D3DXVec3TransformCoord(&vtx[index].pos, &vLerpPos[0], &im);
-		vtx[index].color = D3DCOLOR_XRGB(255, 0, 204);
+		//vtx[index].color = D3DCOLOR_XRGB(255, 0, 204);
 		++index;
 
 		if (maxvtxCnt <= index)
 			return;
 
 		D3DXVec3TransformCoord(&vtx[index].pos, &vLerpPos[1], &im);
-		vtx[index].color = D3DCOLOR_XRGB(255, 255, 0);
+		//vtx[index].color = D3DCOLOR_XRGB(255, 255, 0);
 		++index;
 		if (maxvtxCnt <= index)
 			return;
@@ -188,22 +197,20 @@ void TrailEffect::SplineTrailPosition(VTXCOL* vtx, const size_t& dataindex, unsi
 
 void TrailEffect::UpdateTrail()
 {
-	// 트레일 데이터 업데이트 부분 //
-	auto iterEnd = trailDatas.end(); // end까지 받고
-	for (auto iter = trailDatas.begin(); iter != trailDatas.end(); ) // 순회
+	auto iterEnd = trailDatas.end();
+	for (auto iter = trailDatas.begin(); iter != trailDatas.end(); )
 	{
-		iter->timecount += deltatime; // ㅆㅣ발 deltatime 받고
-		// 지속 시간이 지났다면
+		iter->timecount += deltatime;
+
 		if (iter->timecount >= alivetime)
 			iter = trailDatas.erase(iter);
 		else
 			++iter;
 	}
-	////////////////////////////////////////
 
-	if (trailDatas.size() <= 1) // 정점이 2개밖에 나오지 않으니, 삼각형이 만들어지지 못하니 그냥 리턴
+	if (trailDatas.size() <= 1)
 		return;
-	VTXCOL* pVertex = nullptr;
+	VTXTEX* pVertex = nullptr;
 	INDEX16* pIndex = nullptr;
 
 	vb->Lock(0, 0, reinterpret_cast<void**>(&pVertex), 0);
@@ -212,34 +219,25 @@ void TrailEffect::UpdateTrail()
 	std::size_t dataCnt = trailDatas.size();
 	unsigned long index = 0;
 
-	// 정점 위치, uv 설정
-
 	for (std::size_t i = 0; i < dataCnt; ++i)
 	{
-		/*D3DXVec3TransformCoord(&pVertex[index].pos, &trailDatas[i].position[0], &im);
-		pVertex[index++].color = D3DCOLOR_XRGB(255, 0, 204);
-		D3DXVec3TransformCoord(&pVertex[index].pos, &trailDatas[i].position[1], &im);
-		pVertex[index++].color = D3DCOLOR_XRGB(255, 255, 0);*/
-
-		//pVertex[index].pos = trailDatas[i].position[0];
-		//pVertex[index].pos = trailDatas[i].position[1];
 		SplineTrailPosition(pVertex, i, index);
 
-		// 로컬 행렬로 변환해줘야함. 
-
-		// 오버플로우 방지 ㅇㅇ
 		if (maxvtxCnt <= index)
 			break;
 	}
 
+	uvRate = 1.f / float(index - 2);
+	for (UINT i = 0; i < index; i += 2)
+	{
+		pVertex[i].uv = D3DXVECTOR2(0.f, 1.f - (uvRate * i));
+		pVertex[i + 1].uv = D3DXVECTOR2(1.f, 1.f - (uvRate * i));
+	}
 
-
-	// 인덱스 버퍼 설정
-	curVtxCnt = index; // 위에서 결정된 최종 그려질 정점의 개수 
+	curVtxCnt = index;
 	curTriCnt = curVtxCnt - 2;
 	for (unsigned long i = 0; i < curTriCnt; i+=2)
 	{
-		// tricnt에서 문제가 있다!
 		pIndex[i]._0 = i;
 		pIndex[i]._1 = i + 1;
 		pIndex[i]._2 = i + 3;
@@ -257,45 +255,29 @@ void TrailEffect::RenderTrail()
 	if (trailDatas.size() <= 1)
 		return;
 
-	device->SetStreamSource(0, vb, 0, vtxSize); // 정점 버퍼 연결
-	device->SetFVF(VTXCOL_FVF);
+	device->SetStreamSource(0, vb, 0, vtxSize);
+	device->SetFVF(VTXTEX_FVF);
 	device->SetIndices(ib);
 	if (renderline)
-		device->DrawIndexedPrimitive(D3DPT_LINELIST, 0, 0, curVtxCnt, 0, curTriCnt); // 현재 결정된 정점 개수와 삼각형 개수만큼 그린다.
+		device->DrawIndexedPrimitive(D3DPT_LINELIST, 0, 0, curVtxCnt, 0, curTriCnt);
 	else
-		device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, curVtxCnt, 0, curTriCnt); // 현재 결정된 정점 개수와 삼각형 개수만큼 그린다.
+		device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, curVtxCnt, 0, curTriCnt);
 
 }
 
-TrailEffect* trail; // 트레일을 관리해주는 클래스
-
-// psudocode
-// 버텍스 버퍼, 인덱스 버퍼 초기화 OK
-// 키를 누르면 실시간으로 추가되는지 확인 OK
-// 일단, 키를 누르면 트레일을 특정 위치 += ? 에 추가시켜, 삼각형이 실시간으로 그려지는지 확인하기 OK
-// 동적으로 버퍼 껴주기 OK
-// 위치 변하면서 계속 그려지는지 확인 OK
-// 칼 크기의 Box의 Up, Down 로컬 위치에 부착시켜주기. OK
-// 부착 뒤 박스의 Z Rotation을 돌려주기
-// 돌아가면서 보간이 잘 되는지 확인
-// 버텍스 반대편부터 그려야하는지 확인
-// 그려주기
-
-
+TrailEffect* trail;
 
 HRESULT InitD3D(HWND hWnd)
 {
 	if (NULL == (g_pD3D = Direct3DCreate9(D3D_SDK_VERSION)))
 		return E_FAIL;
 
-	// Set up the structure used to create the D3DDevice
 	D3DPRESENT_PARAMETERS d3dpp;
 	ZeroMemory(&d3dpp, sizeof(d3dpp));
 	d3dpp.Windowed = TRUE;
 	d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
 	d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
 
-	// Create the D3DDevice
 	if (FAILED(g_pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hWnd,
 		D3DCREATE_SOFTWARE_VERTEXPROCESSING,
 		&d3dpp, &g_pd3dDevice)))
@@ -314,7 +296,6 @@ HRESULT InitD3D(HWND hWnd)
 
 HRESULT InitGeometry()
 {
-
 	if (FAILED(D3DXCreateBox(g_pd3dDevice, 0.5, 2, 0.5, &box, nullptr)))
 		return E_FAIL;
 	
@@ -328,14 +309,11 @@ HRESULT InitGeometry()
 	
 	box->UnlockVertexBuffer();
 
-	// 씨빨 버그 뭐야
+	if (SUCCEEDED(D3DXCreateTextureFromFile(g_pd3dDevice, L"trail.dds", &texture)))
+		cout << "텍스쳐 ON" << endl;
 
 	if (SUCCEEDED(trail->Initalize(g_pd3dDevice, 1000, 0, 0.03f, 1, 20)))
 		cout << "트레일 초기화 완료" << endl;
-
-
-
-
 	return S_OK;
 }
 
@@ -343,13 +321,8 @@ HRESULT InitGeometry()
 VOID PipelineSetup()
 {
 	D3DXMATRIXA16 matWorld;
-	//D3DXMatrixIdentity(&matWorld);
-	//UINT iTime = timeGetTime() % 1000;
-	//float t = (float)iTime / 1000;
 	deltatime = 0.015f;
-	//FLOAT fAngle = (iTime * (2.0f * D3DX_PI) / 1000.0f);
-	//D3DXMatrixRotationY(&matWorld, fAngle);
-	D3DXMATRIX matRot; // 씨발ㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋ이실수를하네
+	D3DXMATRIX matRot;
 	D3DXMatrixRotationYawPitchRoll(&matRot, boxrot.y, boxrot.x, boxrot.z);
 	D3DXMatrixTranslation(&matWorld, boxpos.x, boxpos.y, boxpos.z);
 
@@ -414,7 +387,6 @@ void CheckKeyInput()
 
 			ispressed[1] = true;
 			trail->renderline = !trail->renderline;
-			// 기준위치를 중심으로 조금씩 움직이는 모습이 가장 예쁠듯.
 		}
 	}
 	else
@@ -427,59 +399,37 @@ void CheckKeyInput()
 
 VOID Render()
 {
-	// Clear the backbuffer to a black color
 	g_pd3dDevice->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
 
-	// Begin the scene
 	if (SUCCEEDED(g_pd3dDevice->BeginScene()))
 	{
 		CheckKeyInput();
 		PipelineSetup();
 
-
 		D3DXVECTOR3 vUp = *reinterpret_cast<D3DXVECTOR3*>(&boxWorld._21);
 		
 		D3DXVec3Normalize(&vUp, &vUp);
-		
-
-		//g_pd3dDevice->SetRenderState(D3DRS_FILLMODE, D3DFILL_WIREFRAME);
-		//g_pd3dDevice->SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
 
 		D3DXVECTOR3 vDownPos = boxpos + vUp * -1.f;
 		D3DXVECTOR3 vUpPos = boxpos + vUp * 1.f;
 
-
-
-
-		trail->AddNewTrail(vDownPos, vUpPos); // 위치정보 넣어줘야함!
-		//trail->AddNewTrail(up, down); // 위치정보 넣어줘야함!
-
-		//cout << down.x << " " << down.y << " " << down.z << endl;
-		//cout << up.x << " " << up.y << " " << up.z << endl;
+		trail->AddNewTrail(vDownPos, vUpPos); 
 
 		trail->UpdateTrail();
 
+		g_pd3dDevice->SetTexture(0, texture);
 		trail->RenderTrail();
 		box->DrawSubset(0);
-
 
 		g_pd3dDevice->EndScene();
 	}
 
-	// Present the backbuffer contents to the display
 	g_pd3dDevice->Present(NULL, NULL, NULL, NULL);
 }
 
 #pragma region OTHERS
-//-----------------------------------------------------------------------------
-// Name: Cleanup()
-// Desc: Releases all previously initialized objects
-//-----------------------------------------------------------------------------
 VOID Cleanup()
 {
-	/*if (trail->vb != NULL)
-		trail->vb->Release();*/
-
 	if (trail != nullptr)
 		delete trail;
 
@@ -507,9 +457,6 @@ LRESULT WINAPI MsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 //INT WINAPI wWinMain( HINSTANCE hInst, HINSTANCE, LPWSTR, INT )
 int main(void)
 {
-	//UNREFERENCED_PARAMETER( hInst );
-
-	// Register the window class
 	WNDCLASSEX wc =
 	{
 		sizeof(WNDCLASSEX), CS_CLASSDC, MsgProc, 0L, 0L,
@@ -518,22 +465,17 @@ int main(void)
 	};
 	RegisterClassEx(&wc);
 
-	// Create the application's window
 	HWND hWnd = CreateWindow(L"Trail", L"Trail",
 		WS_OVERLAPPEDWINDOW, 100, 100, 600, 600,
 		NULL, NULL, wc.hInstance, NULL);
 
-	// Initialize Direct3D
 	if (SUCCEEDED(InitD3D(hWnd)))
 	{
-		// Create the scene geometry
 		if (SUCCEEDED(InitGeometry()))
 		{
-			// Show the window
 			ShowWindow(hWnd, SW_SHOWDEFAULT);
 			UpdateWindow(hWnd);
 
-			// Enter the message loop
 			MSG msg;
 			ZeroMemory(&msg, sizeof(msg));
 			while (msg.message != WM_QUIT)
