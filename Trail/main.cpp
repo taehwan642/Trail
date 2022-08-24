@@ -82,7 +82,6 @@ private:
 	std::vector<TrailData> trailDatas;
 
 public:
-	bool renderline = false;
 	explicit TrailEffect() {};
 	virtual ~TrailEffect() {};
 	LPDIRECT3DVERTEXBUFFER9 vb = nullptr;
@@ -143,22 +142,19 @@ void TrailEffect::AddNewTrail(const D3DXVECTOR3& upposition, const D3DXVECTOR3& 
 
 void TrailEffect::SplineTrailPosition(VTXTEX* vtx, const size_t& dataindex, unsigned long& index)
 {
-	D3DXMATRIX im;
-	D3DXMatrixInverse(&im, 0, &boxWorld);
-
 	if (maxvtxCnt <= index)
 		return;
 
 	size_t iCurIndex = index;
 
-	D3DXVec3TransformCoord(&vtx[index].pos, &trailDatas[dataindex].position[0], &im);
+	vtx[index].pos = trailDatas[dataindex].position[0];
 	//vtx[index++].color = D3DCOLOR_XRGB(255, 0, 204);
 	++index;
 
 	if (maxvtxCnt <= index)
 		return;
 
-	D3DXVec3TransformCoord(&vtx[index].pos, &trailDatas[dataindex].position[1], &im);
+	vtx[index].pos = trailDatas[dataindex].position[1];
 	//vtx[index++].color = D3DCOLOR_XRGB(255, 255, 0);
 	++index;
 
@@ -190,14 +186,14 @@ void TrailEffect::SplineTrailPosition(VTXTEX* vtx, const size_t& dataindex, unsi
 			j / float(lerpcnt));
 
 
-		D3DXVec3TransformCoord(&vtx[index].pos, &vLerpPos[0], &im);
+		vtx[index].pos = vLerpPos[0];
 		//vtx[index].color = D3DCOLOR_XRGB(255, 0, 204);
 		++index;
 
 		if (maxvtxCnt <= index)
 			return;
 
-		D3DXVec3TransformCoord(&vtx[index].pos, &vLerpPos[1], &im);
+		vtx[index].pos = vLerpPos[1];
 		//vtx[index].color = D3DCOLOR_XRGB(255, 255, 0);
 		++index;
 		if (maxvtxCnt <= index)
@@ -384,12 +380,6 @@ void CheckKeyInput()
 	{
 		boxrot.z += 10 * deltatime;
 	}
-
-	if ((GetAsyncKeyState('O') & 0x8000))
-	{
-		trail->renderline = !trail->renderline;
-	}
-
 }
 
 VOID Update()
@@ -433,8 +423,12 @@ VOID Render()
 	if (SUCCEEDED(g_pd3dDevice->BeginScene()))
 	{
 		g_pd3dDevice->SetTexture(0, texture);
-		trail->RenderTrail();
 		box->DrawSubset(0);
+		
+		D3DXMATRIX identity;
+		D3DXMatrixIdentity(&identity);
+		g_pd3dDevice->SetTransform(D3DTS_WORLD, &identity);
+		trail->RenderTrail();
 
 		g_pd3dDevice->EndScene();
 	}
