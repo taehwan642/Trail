@@ -1,4 +1,3 @@
-#pragma region HEADERS
 #include <Windows.h>
 #include <iostream>
 #include <mmsystem.h>
@@ -7,14 +6,20 @@
 #include <strsafe.h>
 #pragma warning( default : 4996 )
 #include <vector>
-#pragma endregion
-using namespace std;
 
 LPDIRECT3D9             g_pD3D = NULL;
 LPDIRECT3DDEVICE9       g_pd3dDevice = NULL;
 D3DXVECTOR3 trailuppos = { 0, 0.5f, 0 };
 D3DXVECTOR3 traildownpos = { 0, -0.5f, 0 };
-float deltatime = 0; // 놀랍게도 이거 야매
+
+uint64_t	frequency = 0;
+uint64_t	prevCount = 0;
+
+uint32_t	frameCount = 0;
+float	frameTime = 0.f;
+uint32_t	fps = 0;
+float deltatime = 0;
+
 LPD3DXMESH box;
 D3DXVECTOR3 boxpos;
 D3DXVECTOR3 boxrot;
@@ -98,8 +103,11 @@ HRESULT TrailEffect::Initalize(LPDIRECT3DDEVICE9& dev, const unsigned long& _buf
 	device = dev;
 
 	maxvtxCnt = _bufferSize;
-	if (maxvtxCnt <= 2) 
-		goto error;
+	if (maxvtxCnt <= 2)
+	{
+		hr = E_FAIL;
+		return hr;
+	}
 
 	maxtriCnt = maxvtxCnt - 2;
 	vtxSize = sizeof(VTXTEX);
@@ -108,15 +116,17 @@ HRESULT TrailEffect::Initalize(LPDIRECT3DDEVICE9& dev, const unsigned long& _buf
 	lerpcnt = _lerpcnt;
 
 	if (FAILED(device->CreateVertexBuffer(maxvtxCnt * vtxSize, 0, VTXTEX_FVF, D3DPOOL_MANAGED, &vb, nullptr)))
-		goto error;
+	{
+		hr = E_FAIL;
+		return hr;
+	}
 
 	if (FAILED(device->CreateIndexBuffer(sizeof(INDEX16) * maxtriCnt, 0, D3DFMT_INDEX16, D3DPOOL_MANAGED, &ib, nullptr)))
-		goto error;
+	{
+		hr = E_FAIL;
+		return hr;
+	}
 	
-	return hr;
-
-error:
-	hr = E_FAIL;
 	return hr;
 }
 
@@ -258,11 +268,7 @@ void TrailEffect::RenderTrail()
 	device->SetStreamSource(0, vb, 0, vtxSize);
 	device->SetFVF(VTXTEX_FVF);
 	device->SetIndices(ib);
-	if (renderline)
-		device->DrawIndexedPrimitive(D3DPT_LINELIST, 0, 0, curVtxCnt, 0, curTriCnt);
-	else
-		device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, curVtxCnt, 0, curTriCnt);
-
+	device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, curVtxCnt, 0, curTriCnt);
 }
 
 TrailEffect* trail;
@@ -291,6 +297,9 @@ HRESULT InitD3D(HWND hWnd)
 
 	trail = new TrailEffect();
 
+	::QueryPerformanceFrequency(reinterpret_cast<LARGE_INTEGER*>(&frequency));
+	::QueryPerformanceCounter(reinterpret_cast<LARGE_INTEGER*>(&prevCount)); // CPU 클럭
+
 	return S_OK;
 }
 
@@ -310,23 +319,22 @@ HRESULT InitGeometry()
 	box->UnlockVertexBuffer();
 
 	if (SUCCEEDED(D3DXCreateTextureFromFile(g_pd3dDevice, L"trail.dds", &texture)))
-		cout << "텍스쳐 ON" << endl;
+		std::cout << "텍스쳐 ON" << std::endl;
 
-	if (SUCCEEDED(trail->Initalize(g_pd3dDevice, 1000, 0, 0.03f, 1, 20)))
-		cout << "트레일 초기화 완료" << endl;
+	if (SUCCEEDED(trail->Initalize(g_pd3dDevice, 5000, 0, 0.03f, 1, 20)))
+		std::cout << "트레일 초기화 완료" << std::endl;
 	return S_OK;
 }
 
 
 VOID PipelineSetup()
 {
-	D3DXMATRIXA16 matWorld;
-	deltatime = 0.015f;
+	D3DXMATRIXA16 matTrans;
 	D3DXMATRIX matRot;
 	D3DXMatrixRotationYawPitchRoll(&matRot, boxrot.y, boxrot.x, boxrot.z);
-	D3DXMatrixTranslation(&matWorld, boxpos.x, boxpos.y, boxpos.z);
+	D3DXMatrixTranslation(&matTrans, boxpos.x, boxpos.y, boxpos.z);
 
-	matRot *= matWorld;
+	matRot *= matTrans;
 
 	boxWorld = matRot;
 
@@ -346,55 +354,76 @@ VOID PipelineSetup()
 	g_pd3dDevice->SetTransform(D3DTS_PROJECTION, &matProj);
 }
 
-
-bool ispressed[3];
-
 void CheckKeyInput()
 {
 	if (GetAsyncKeyState('W') & 0x8000)
 	{
-		boxpos.z += 0.1f;
+		boxpos.z += 10 * deltatime;
 	}
 
 	if (GetAsyncKeyState('S') & 0x8000)
 	{
-		boxpos.z -= 0.1f;
+		boxpos.z -= 10 * deltatime;
 	}
 
 	if (GetAsyncKeyState('A') & 0x8000)
 	{
-		boxpos.x -= 0.1f;
+		boxpos.x -= 10 * deltatime;
 	}
 
 	if (GetAsyncKeyState('D') & 0x8000)
 	{
-		boxpos.x += 0.1f;
+		boxpos.x += 10 * deltatime;
 	}
 
 	if (GetAsyncKeyState('E') & 0x8000)
 	{
-		boxrot.z -= 0.3f;
+		boxrot.z -= 10 * deltatime;
 	}
 	if (GetAsyncKeyState('Q') & 0x8000)
 	{
-		boxrot.z += 0.3f;
+		boxrot.z += 10 * deltatime;
 	}
 
 	if ((GetAsyncKeyState('O') & 0x8000))
 	{
-		if (!ispressed[1])
-		{
-
-			ispressed[1] = true;
-			trail->renderline = !trail->renderline;
-		}
+		trail->renderline = !trail->renderline;
 	}
-	else
+
+}
+
+VOID Update()
+{
+	uint64_t currentCount;
+	::QueryPerformanceCounter(reinterpret_cast<LARGE_INTEGER*>(&currentCount));
+
+	deltatime = (currentCount - prevCount) / static_cast<float>(frequency);
+	prevCount = currentCount;
+
+	frameCount++;
+	frameTime += deltatime;
+
+	if (frameTime > 1.f)
 	{
-		ispressed[1] = false;
-	}
-	
+		fps = static_cast<uint32_t>(frameCount / frameTime);
 
+		frameTime = 0.f;
+		frameCount = 0;
+	}
+
+	CheckKeyInput();
+	PipelineSetup();
+
+	D3DXVECTOR3 vUp = *reinterpret_cast<D3DXVECTOR3*>(&boxWorld._21);
+
+	D3DXVec3Normalize(&vUp, &vUp);
+
+	D3DXVECTOR3 vDownPos = boxpos + vUp * -1.f;
+	D3DXVECTOR3 vUpPos = boxpos + vUp * 1.f;
+
+	trail->AddNewTrail(vDownPos, vUpPos);
+
+	trail->UpdateTrail();
 }
 
 VOID Render()
@@ -403,20 +432,6 @@ VOID Render()
 
 	if (SUCCEEDED(g_pd3dDevice->BeginScene()))
 	{
-		CheckKeyInput();
-		PipelineSetup();
-
-		D3DXVECTOR3 vUp = *reinterpret_cast<D3DXVECTOR3*>(&boxWorld._21);
-		
-		D3DXVec3Normalize(&vUp, &vUp);
-
-		D3DXVECTOR3 vDownPos = boxpos + vUp * -1.f;
-		D3DXVECTOR3 vUpPos = boxpos + vUp * 1.f;
-
-		trail->AddNewTrail(vDownPos, vUpPos); 
-
-		trail->UpdateTrail();
-
 		g_pd3dDevice->SetTexture(0, texture);
 		trail->RenderTrail();
 		box->DrawSubset(0);
@@ -427,7 +442,6 @@ VOID Render()
 	g_pd3dDevice->Present(NULL, NULL, NULL, NULL);
 }
 
-#pragma region OTHERS
 VOID Cleanup()
 {
 	if (trail != nullptr)
@@ -486,13 +500,14 @@ int main(void)
 					DispatchMessage(&msg);
 				}
 				else
+				{
+					Update();
 					Render();
+				}
 			}
 		}
 	}
 
-	UnregisterClass(L"D3D Tutorial", wc.hInstance);
+	UnregisterClass(L"Trail", wc.hInstance);
 	return 0;
 }
-
-#pragma endregion
